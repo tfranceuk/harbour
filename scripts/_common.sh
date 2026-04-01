@@ -16,18 +16,10 @@ if [[ -f "${HARBOUR_ENV}" ]]; then
 fi
 
 refresh_context_files() {
-  RUNTIME_ENV="${HARBOUR_HARNESS_PATH:-}/runtime.env"
   REPOS_FILE="${HARBOUR_HARNESS_PATH:-}/repos.yaml"
 }
 
-load_runtime_env() {
-  refresh_context_files
-  if [[ -z "${HARBOUR_WORKSPACE_ROOT:-}" && -f "${RUNTIME_ENV}" ]]; then
-    source "${RUNTIME_ENV}"
-  fi
-}
-
-load_runtime_env
+refresh_context_files
 
 expand_home_path() {
   local path=$1

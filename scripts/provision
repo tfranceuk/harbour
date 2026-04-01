@@ -47,7 +47,6 @@ if [[ ! -f "${REPOS_FILE}" ]]; then
   printf "%s is missing. Create it in harbour-harness.\n" "${REPOS_FILE}" >&2
   exit 1
 fi
-load_runtime_env
 
 if [[ -z "${HARBOUR_WORKSPACE_ROOT:-}" ]]; then
   printf "Workspace root, e.g. ~/git: "
