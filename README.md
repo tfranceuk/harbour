@@ -14,6 +14,22 @@ make build
 ./bin/harbour help
 ```
 
+`make build` builds for the current platform.
+
+## Release
+
+```sh
+make release VERSION=v0.1.0
+```
+
+This writes Homebrew-ready Darwin artefacts to `dist/`:
+
+- `harbour-v0.1.0-darwin-amd64.tar.gz`
+- `harbour-v0.1.0-darwin-arm64.tar.gz`
+- `sha256sums.txt`
+
+Release builds inject the requested version into `harbour version`.
+
 ## Quick Start
 
 1. Create your harness
