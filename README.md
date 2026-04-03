@@ -1,17 +1,19 @@
 # Harbour
 
-Run agents across your repos inside an isolated Colima VM.
+Run agents across all your repos in an isolated, shareable sandbox.
 
-- One Go CLI
-- One JSON config file
-- One harness repo for `repos.yaml`, `AGENTS.md`, and `skills/`
-- Go source under `cmd/harbour/`
+- Share a simple harness (`repos.yaml`, `AGENTS.md`, `skills/`)
+- Run agents in an isolated Colima VM
+- Run across multiple repositories in a single run
+- Keep your existing Docker workflow unchanged
+- Choose your agent (Claude or Codex) at provisioning time
 
-## Build
+## Install
 
 ```sh
-make build
-./bin/harbour help
+brew tap agent-harbour/harbour
+brew install agent-harbour/harbour/harbour
+harbour help
 ```
 
 `make build` builds a local macOS ARM64 binary.
@@ -49,31 +51,41 @@ Release builds inject the requested version into `harbour version`.
 2. Provision Harbour
 
    ```sh
-   ./bin/harbour provision
+   harbour provision
    ```
 
-   The first run creates a config file at the platform config location for Harbour.
-   On Linux this is typically `~/.config/harbour/config.json`.
+   The first run creates Harbour's local config automatically.
 
    Provision prompts for:
 
-   - `harness_path`
-   - `workspace_root`
-   - The active agent
+   - Path to your harness
+   - Workspace root
+   - Agent to provision
    - The default `harbour` command
 
 3. Run the agent
 
 ```sh
-./bin/harbour
+harbour
 ```
 
 Or run a command explicitly:
 
 ```sh
-./bin/harbour agent
-./bin/harbour yolo
-./bin/harbour shell
+harbour agent
+harbour yolo
+harbour shell
+```
+
+## Commands
+
+```sh
+harbour help
+harbour version
+harbour provision
+harbour shell
+harbour agent
+harbour yolo
 ```
 
 ## Config
@@ -101,13 +113,29 @@ Harbour stores its config as a single JSON file.
 }
 ```
 
-## Commands
+## Build From Source
 
 ```sh
+make build
 ./bin/harbour help
-./bin/harbour version
-./bin/harbour provision
-./bin/harbour shell
-./bin/harbour agent
-./bin/harbour yolo
 ```
+
+`make build` builds a local macOS ARM64 binary for development use.
+
+## Release
+
+```sh
+make dist VERSION=v0.1.0
+```
+
+This writes Homebrew-ready Darwin artefacts to `dist/`:
+
+- `harbour-v0.1.0-darwin-amd64.tar.gz`
+- `harbour-v0.1.0-darwin-arm64.tar.gz`
+- `sha256sums.txt`
+
+`make dist` verifies the requested tag on `origin`, clones that tag into a temporary release source checkout under `build/`, and builds the release artefacts from that remote tagged source.
+
+Release builds inject the requested version into `harbour version`.
+
+`VERSION` must match `vX.Y.Z`.
