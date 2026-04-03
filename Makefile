@@ -1,8 +1,6 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 VERSION ?= dev
-BUILD_OS ?= $(shell go env GOOS)
-BUILD_ARCH ?= $(shell go env GOARCH)
 DIST_DIR := dist
 LDFLAGS := -X main.version=$(VERSION)
 DARWIN_AMD64_ARCHIVE := $(DIST_DIR)/harbour-$(VERSION)-darwin-amd64.tar.gz
@@ -20,7 +18,7 @@ help:
 
 build:
 	mkdir -p bin
-	GOOS=$(BUILD_OS) GOARCH=$(BUILD_ARCH) go build -ldflags "$(LDFLAGS)" -o bin/harbour ./cmd/harbour
+	go build -ldflags "$(LDFLAGS)" -o bin/harbour ./cmd/harbour
 
 release: clean-dist $(DARWIN_AMD64_ARCHIVE) $(DARWIN_ARM64_ARCHIVE) $(DIST_DIR)/sha256sums.txt
 
