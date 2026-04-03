@@ -24,7 +24,7 @@ require-release-version:
 	@test -n "$(VERSION)" || (echo "VERSION is required for make dist, e.g. make dist VERSION=v0.1.0" >&2; exit 1)
 	@printf '%s\n' "$(VERSION)" | grep -Eq "$(RELEASE_TAG_PATTERN)" || (echo "VERSION must match vX.Y.Z, e.g. v0.1.0" >&2; exit 1)
 
-prepare-dist-source:
+prepare-dist-source: require-release-version
 	rm -rf $(RELEASE_SRC_DIR)
 	rm -rf $(DIST_DIR)
 	git ls-remote --exit-code --tags origin "refs/tags/$(VERSION)" >/dev/null || (echo "Tag $(VERSION) was not found on origin" >&2; exit 1)
