@@ -22,6 +22,9 @@ func TestRunWithoutConfigShowsHelp(t *testing.T) {
 	if !strings.Contains(stdout, "Usage: harbour [command]") {
 		t.Fatalf("stdout did not contain help output:\n%s", stdout)
 	}
+	if !strings.Contains(stdout, "Colima is required before running harbour provision.") {
+		t.Fatalf("stdout did not contain Colima prerequisite guidance:\n%s", stdout)
+	}
 	if stderr != "" {
 		t.Fatalf("stderr was not empty:\n%s", stderr)
 	}

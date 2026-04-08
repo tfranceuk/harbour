@@ -18,6 +18,8 @@ brew install agent-harbour/harbour/harbour
 harbour help
 ```
 
+Harbour provisions and runs an isolated Colima VM on the host. Homebrew installs Colima automatically.
+
 ## Quick Start
 
 1. Create your harness
