@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/agent-harbour/harbour/cmd/harbour/vm"
 )
@@ -15,9 +16,18 @@ import _ "embed"
 var provisionVMScript string
 
 func runProvision() error {
-	cfg, err := loadConfig(true)
+	cfgPath, err := configPath()
 	if err != nil {
 		return err
+	}
+	fmt.Printf("Using config at %s\n\n", cfgPath)
+
+	cfg, warning, err := loadConfigForProvision(cfgPath)
+	if err != nil {
+		return err
+	}
+	if warning != "" {
+		fmt.Fprintf(os.Stderr, "Notice: invalid config: %s\n\n", warning)
 	}
 	vmBackend, err := vm.Resolve(cfg.vmConfig())
 	if err != nil {
@@ -26,22 +36,42 @@ func runProvision() error {
 	if err := vmBackend.EnsureInstalled(); err != nil {
 		return err
 	}
-	cfgPath, err := configPath()
+
+	workspacePromptDefault := cfg.WorkspacePath
+	if workspacePromptDefault == "" {
+		workspacePromptDefault = defaultWorkspacePromptPath()
+	}
+	reply, err := promptPathWithDefault("Workspace path: ", workspacePromptDefault)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Using Harbour config %s\n", cfgPath)
-
-	if cfg.HarnessPath == "" {
-		reply, err := promptPath("Your Harbour harness path, e.g. ~/git/my-harbour-harness: ")
-		if err != nil {
-			return err
-		}
-		if reply == "" {
-			return fmt.Errorf("harness_path is required")
-		}
-		cfg.HarnessPath = reply
+	if reply == "" {
+		return fmt.Errorf("workspace_path is required")
 	}
+	cfg.WorkspacePath = reply
+	cfg.WorkspacePath, err = canonicalPath(cfg.WorkspacePath)
+	if err != nil {
+		return err
+	}
+	if err := ensureDirectory(cfg.WorkspacePath, "workspace_path"); err != nil {
+		return err
+	}
+
+	harnessPromptDefault := cfg.HarnessPath
+	if harnessPromptDefault == "" {
+		harnessPromptDefault = defaultHarnessPromptPath(reply)
+	}
+	reply, err = promptPathWithDefault(
+		"Harness path: ",
+		harnessPromptDefault,
+	)
+	if err != nil {
+		return err
+	}
+	if reply == "" {
+		return fmt.Errorf("harness_path is required")
+	}
+	cfg.HarnessPath = reply
 	cfg.HarnessPath, err = canonicalPath(cfg.HarnessPath)
 	if err != nil {
 		return err
@@ -49,51 +79,19 @@ func runProvision() error {
 	if err := ensureDirectory(cfg.HarnessPath, "harness_path"); err != nil {
 		return err
 	}
-	fmt.Printf("harness_path=%s\n", cfg.HarnessPath)
-
-	reposFile := reposFilePath(cfg.HarnessPath)
-	if _, err := os.Stat(reposFile); err != nil {
-		return fmt.Errorf("%s is missing. Create it in harbour-harness", reposFile)
-	}
-
-	if cfg.WorkspaceRoot == "" {
-		reply, err := promptPath("Workspace root, e.g. ~/git: ")
-		if err != nil {
-			return err
-		}
-		if reply == "" {
-			return fmt.Errorf("workspace_root is required")
-		}
-		cfg.WorkspaceRoot = reply
-	}
-	cfg.WorkspaceRoot, err = canonicalPath(cfg.WorkspaceRoot)
-	if err != nil {
+	if err := ensureSubdirectory(cfg.HarnessPath, cfg.WorkspacePath, "harness_path", "workspace_path"); err != nil {
 		return err
 	}
-	if err := ensureDirectory(cfg.WorkspaceRoot, "workspace_root"); err != nil {
-		return err
-	}
-	fmt.Printf("workspace_root=%s\n", cfg.WorkspaceRoot)
 
 	defaultAgent := "codex"
-	switch cfg.ActiveAgent {
-	case "codex", "claude":
+	if cfg.ActiveAgent != "" {
 		defaultAgent = cfg.ActiveAgent
-	case "":
-	default:
-		fmt.Fprintf(os.Stderr, "Ignoring invalid active_agent=%s in %s. Using %s.\n", cfg.ActiveAgent, cfgPath, defaultAgent)
 	}
-	fmt.Printf("active_agent=%s\n", defaultAgent)
 
 	defaultCommand := "agent"
-	switch cfg.DefaultCommand {
-	case "agent", "shell", "yolo":
+	if cfg.DefaultCommand != "" {
 		defaultCommand = cfg.DefaultCommand
-	case "":
-	default:
-		fmt.Fprintf(os.Stderr, "Ignoring invalid default_command=%s in %s. Using %s.\n", cfg.DefaultCommand, cfgPath, defaultCommand)
 	}
-	fmt.Printf("default_command=%s\n", defaultCommand)
 
 	selectedAgent, err := promptChoice(
 		fmt.Sprintf("Select the agent to provision [codex/claude] [%s]: ", defaultAgent),
@@ -131,20 +129,14 @@ func runProvision() error {
 		}
 	}
 
-	repoHosts, err := existingRepoHosts(reposFile, cfg.WorkspaceRoot, true)
-	if err != nil {
+	mounts := []string{cfg.WorkspacePath}
+
+	if err := os.Chdir(cfg.WorkspacePath); err != nil {
 		return err
 	}
 
-	mounts := []string{cfg.HarnessPath}
-	mounts = append(mounts, repoHosts...)
-
-	if err := os.Chdir(cfg.WorkspaceRoot); err != nil {
-		return err
-	}
-
-	desiredMounts := desiredMountLines(cfg.HarnessPath, repoHosts)
-	currentMounts, err := vmBackend.CurrentMountLines()
+	desiredMount := fmt.Sprintf("%s|rw", cfg.WorkspacePath)
+	hasDesiredMount, err := vmBackend.HasExactMount(desiredMount)
 	if err != nil {
 		return err
 	}
@@ -154,12 +146,9 @@ func runProvision() error {
 		return err
 	}
 	if running {
-		if !equalStringSlices(desiredMounts, currentMounts) {
+		if !hasDesiredMount {
 			fmt.Printf("Configured mounts differ from the running Harbour profile %s.\n", cfg.VMProfile)
-			fmt.Printf("\nMount diff:\n")
-			for _, line := range formatMountDiff(currentMounts, desiredMounts) {
-				fmt.Printf("  %s\n", line)
-			}
+			fmt.Printf("\nDesired mount:\n  %s\n", strings.Replace(desiredMount, "|", " (", 1)+")")
 			ok, err := promptYesNo(fmt.Sprintf("\nRestart %s now to apply mount changes? [y/N] ", vmBackend.Name()))
 			if err != nil {
 				return err
@@ -184,7 +173,7 @@ func runProvision() error {
 
 	agentsPath := filepath.Join(cfg.HarnessPath, "AGENTS.md")
 	if _, err := os.Stat(agentsPath); err != nil {
-		return fmt.Errorf("%s is missing. Create it in harbour-harness before provisioning", agentsPath)
+		return fmt.Errorf("%s is missing. Create it in harness_path before provisioning", agentsPath)
 	}
 	skillsPath := filepath.Join(cfg.HarnessPath, "skills")
 	agentsData, err := os.ReadFile(agentsPath)
@@ -203,7 +192,7 @@ func runProvision() error {
 		agentsB64,
 		hostUID,
 		hostGID,
-		cfg.WorkspaceRoot,
+		cfg.WorkspacePath,
 	}
 
 	if err := vmBackend.RunRemoteScript(provisionVMScript, scriptArgs); err != nil {
@@ -219,9 +208,9 @@ func runProvision() error {
 
 	switch selectedAgent {
 	case "codex":
-		fmt.Printf("Provisioned Codex %s, linked %s/AGENTS.md, and synced custom skills.\n", requestedVersion, cfg.WorkspaceRoot)
+		fmt.Printf("Provisioned Codex %s, linked ~/.codex/AGENTS.md to the harness, and linked the harness skills directory into ~/.codex/skills.\n", requestedVersion)
 	case "claude":
-		fmt.Printf("Provisioned Claude Code %s, linked %s/CLAUDE.md, and synced custom skills.\n", requestedVersion, cfg.WorkspaceRoot)
+		fmt.Printf("Provisioned Claude Code %s, linked ~/.claude/CLAUDE.md to the harness, and linked the harness skills directory into ~/.claude/skills.\n", requestedVersion)
 	}
 	fmt.Printf("Default command is harbour %s.\n", cfg.DefaultCommand)
 	fmt.Println("Run harbour to use the default command, or run harbour agent, harbour yolo, or harbour shell explicitly.")
@@ -248,10 +237,10 @@ func runShell() error {
 		return fmt.Errorf("Harbour profile %s is not running. Start it with harbour provision", cfg.VMProfile)
 	}
 	fmt.Printf("Opening shell in Harbour profile %s\n", cfg.VMProfile)
-	if err := os.Chdir(cfg.WorkspaceRoot); err != nil {
+	if err := os.Chdir(cfg.WorkspacePath); err != nil {
 		return err
 	}
-	command := fmt.Sprintf("cd %q && exec /usr/bin/bash -l", cfg.WorkspaceRoot)
+	command := fmt.Sprintf("cd %q && exec /usr/bin/bash -l", cfg.WorkspacePath)
 	return vmBackend.RunRemoteCommand(command)
 }
 
@@ -277,26 +266,26 @@ func runAgent(yolo bool) error {
 
 	agentName := ""
 	agentCommand := ""
-	instructionFile := ""
+	instructionPath := ""
 	switch cfg.ActiveAgent {
 	case "codex":
 		agentName = "Codex"
 		agentCommand = "codex"
-		instructionFile = "AGENTS.md"
+		instructionPath = "${HOME}/.codex/AGENTS.md"
 	case "claude":
 		agentName = "Claude Code"
 		agentCommand = "claude"
-		instructionFile = "CLAUDE.md"
+		instructionPath = "${HOME}/.claude/CLAUDE.md"
 	default:
 		return fmt.Errorf("unsupported active_agent=%s in %s. Run harbour provision and choose codex or claude", cfg.ActiveAgent, configPath)
 	}
 
 	fmt.Printf("Launching %s in Harbour profile %s\n", agentName, cfg.VMProfile)
-	if err := os.Chdir(cfg.WorkspaceRoot); err != nil {
+	if err := os.Chdir(cfg.WorkspacePath); err != nil {
 		return err
 	}
 
-	remoteScript := buildAgentRemoteScript(cfg, yolo, agentCommand, instructionFile)
+	remoteScript := buildAgentRemoteScript(cfg, yolo, agentCommand, instructionPath)
 	return vmBackend.RunRemoteCommand(remoteScript)
 }
 
@@ -312,8 +301,8 @@ func requireProvisionedConfig(requireHarness bool) (Config, string, error) {
 	if cfg.VMProfile == "" {
 		return Config{}, "", fmt.Errorf("vm_profile is not set in %s. Run harbour provision", cfgPath)
 	}
-	if cfg.WorkspaceRoot == "" {
-		return Config{}, "", fmt.Errorf("workspace_root is not set in %s. Run harbour provision", cfgPath)
+	if cfg.WorkspacePath == "" {
+		return Config{}, "", fmt.Errorf("workspace_path is not set in %s. Run harbour provision", cfgPath)
 	}
 	if requireHarness && cfg.HarnessPath == "" {
 		return Config{}, "", fmt.Errorf("harness_path is not set in %s. Run harbour provision", cfgPath)
@@ -321,7 +310,7 @@ func requireProvisionedConfig(requireHarness bool) (Config, string, error) {
 	return cfg, cfgPath, nil
 }
 
-func buildAgentRemoteScript(cfg Config, yolo bool, agentCommand string, instructionFile string) string {
+func buildAgentRemoteScript(cfg Config, yolo bool, agentCommand string, instructionPath string) string {
 	yoloMode := "false"
 	if yolo {
 		yoloMode = "true"
@@ -329,11 +318,11 @@ func buildAgentRemoteScript(cfg Config, yolo bool, agentCommand string, instruct
 
 	return fmt.Sprintf(`set -euo pipefail
 
-workspace_root=%q
+workspace_path=%q
 harbour_harness_dir=%q
 yolo_mode=%q
 agent_command=%q
-instruction_file=%q
+instruction_path=%q
 export PATH="${HOME}/.local/bin:${PATH}"
 
 if ! command -v "${agent_command}" >/dev/null 2>&1; then
@@ -341,32 +330,32 @@ if ! command -v "${agent_command}" >/dev/null 2>&1; then
   exit 127
 fi
 
-if [[ ! -d "${workspace_root}" ]]; then
-  echo "${workspace_root} is not visible in the VM." >&2
+if [[ ! -d "${workspace_path}" ]]; then
+  echo "${workspace_path} is not visible in the VM." >&2
   echo "Check the current mount layout, stop the Harbour VM, and run harbour provision again." >&2
   exit 127
 fi
 
-if [[ ! -f "${workspace_root}/${instruction_file}" ]]; then
-  echo "${workspace_root}/${instruction_file} is missing in the VM." >&2
+if [[ ! -f "${instruction_path}" ]]; then
+  echo "${instruction_path} is missing in the VM." >&2
   echo "Run harbour provision." >&2
   exit 127
 fi
 
 if [[ ! -d "${harbour_harness_dir}" ]]; then
-  echo "harbour-harness is not mounted in the VM at ${harbour_harness_dir}." >&2
-  echo "Check the sibling harbour-harness repo, stop the Harbour VM, and run harbour provision again." >&2
+  echo "harness_path is not visible in the VM at ${harbour_harness_dir}." >&2
+  echo "Keep the harness inside ${workspace_path}, stop the Harbour VM, and run harbour provision again." >&2
   exit 127
 fi
 
-cd "${workspace_root}"
+cd "${workspace_path}"
 
 case "${agent_command}" in
   codex)
     if [[ "${yolo_mode}" == "true" ]]; then
-      args=(--dangerously-bypass-approvals-and-sandbox -C "${workspace_root}")
+      args=(--dangerously-bypass-approvals-and-sandbox -C "${workspace_path}")
     else
-      args=(--sandbox workspace-write -C "${workspace_root}")
+      args=(--sandbox workspace-write -C "${workspace_path}")
     fi
     ;;
   claude)
@@ -379,17 +368,5 @@ case "${agent_command}" in
 esac
 
 exec "${agent_command}" "${args[@]}"
-`, cfg.WorkspaceRoot, cfg.HarnessPath, yoloMode, agentCommand, instructionFile)
-}
-
-func equalStringSlices(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+`, cfg.WorkspacePath, cfg.HarnessPath, yoloMode, agentCommand, instructionPath)
 }

@@ -20,7 +20,7 @@ type Backend interface {
 	Name() string
 	EnsureInstalled() error
 	Status() (bool, error)
-	CurrentMountLines() ([]string, error)
+	HasExactMount(mount string) (bool, error)
 	Start(mounts []string) error
 	Stop() error
 	RunRemoteCommand(command string) error
@@ -32,6 +32,6 @@ func Resolve(cfg Config) (Backend, error) {
 	case "colima":
 		return Colima{cfg: cfg}, nil
 	default:
-		return nil, fmt.Errorf("unsupported vm_backend=%q (supported: colima)", cfg.Backend)
+		return nil, fmt.Errorf("Unsupported `vm_backend`=%q (supported: colima)", cfg.Backend)
 	}
 }

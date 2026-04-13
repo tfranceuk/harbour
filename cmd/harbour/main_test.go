@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -37,7 +36,7 @@ func TestRunUsesConfiguredDefaultCommand(t *testing.T) {
 	cfg.DefaultCommand = "agent"
 	cfg.ActiveAgent = "codex"
 	cfg.HarnessPath = "/tmp/harness"
-	cfg.WorkspaceRoot = "/tmp/workspace"
+	cfg.WorkspacePath = "/tmp/workspace"
 	if err := saveConfig(cfg); err != nil {
 		t.Fatalf("saveConfig() returned error: %v", err)
 	}
@@ -60,6 +59,102 @@ func TestRunUsesConfiguredDefaultCommand(t *testing.T) {
 
 	if !called {
 		t.Fatal("runAgent was not called")
+	}
+	if stdout != "" {
+		t.Fatalf("stdout was not empty:\n%s", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr was not empty:\n%s", stderr)
+	}
+}
+
+func TestRunFallsBackToHelpWhenConfigIsInvalid(t *testing.T) {
+	configDir := withTestConfigDir(t)
+	configPath := filepath.Join(configDir, "harbour", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() returned error: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{\"vm_backend\":\"\"}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() returned error: %v", err)
+	}
+
+	restore := stubRunAgent(func(yolo bool) error {
+		t.Fatal("runAgent should not be called for invalid config")
+		return nil
+	})
+	defer restore()
+
+	stdout, stderr := captureOutput(t, func() {
+		if err := run(nil); err != nil {
+			t.Fatalf("run(nil) returned error: %v", err)
+		}
+	})
+
+	if !strings.Contains(stdout, "Usage: harbour [command]") {
+		t.Fatalf("stdout did not contain help output:\n%s", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr was not empty:\n%s", stderr)
+	}
+}
+
+func TestRunFallsBackToHelpWhenConfigIsIncompleteForDefaultCommand(t *testing.T) {
+	withTestConfigDir(t)
+
+	cfg := defaultConfig()
+	cfg.DefaultCommand = "agent"
+	if err := saveConfig(cfg); err != nil {
+		t.Fatalf("saveConfig() returned error: %v", err)
+	}
+
+	restore := stubRunAgent(func(yolo bool) error {
+		t.Fatal("runAgent should not be called for incomplete config")
+		return nil
+	})
+	defer restore()
+
+	stdout, stderr := captureOutput(t, func() {
+		if err := run(nil); err != nil {
+			t.Fatalf("run(nil) returned error: %v", err)
+		}
+	})
+
+	if !strings.Contains(stdout, "Usage: harbour [command]") {
+		t.Fatalf("stdout did not contain help output:\n%s", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr was not empty:\n%s", stderr)
+	}
+}
+
+func TestRunProvisionRecoversFromInvalidConfig(t *testing.T) {
+	configDir := withTestConfigDir(t)
+	configPath := filepath.Join(configDir, "harbour", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() returned error: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{\"vm_backend\":\"\"}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() returned error: %v", err)
+	}
+
+	called := false
+	previous := runProvisionCommand
+	runProvisionCommand = func() error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() {
+		runProvisionCommand = previous
+	})
+
+	stdout, stderr := captureOutput(t, func() {
+		if err := run([]string{"provision"}); err != nil {
+			t.Fatalf("run(provision) returned error: %v", err)
+		}
+	})
+
+	if !called {
+		t.Fatal("runProvision was not called")
 	}
 	if stdout != "" {
 		t.Fatalf("stdout was not empty:\n%s", stdout)
@@ -213,7 +308,7 @@ func TestSaveConfigRoundTrip(t *testing.T) {
 
 	cfg := defaultConfig()
 	cfg.HarnessPath = "/tmp/harness"
-	cfg.WorkspaceRoot = "/tmp/workspace"
+	cfg.WorkspacePath = "/tmp/workspace"
 	cfg.ActiveAgent = "claude"
 	cfg.DefaultCommand = "shell"
 	cfg.VMCPU = 8
@@ -242,7 +337,7 @@ func TestSaveConfigRejectsInvalidValues(t *testing.T) {
 	if err == nil {
 		t.Fatal("saveConfig() returned nil error for invalid config")
 	}
-	if !strings.Contains(err.Error(), "active_agent must be codex, claude, or empty") {
+	if !strings.Contains(err.Error(), "`active_agent` must be codex, claude, or empty") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -257,78 +352,46 @@ func TestSaveConfigRejectsEmptyVMProfile(t *testing.T) {
 	if err == nil {
 		t.Fatal("saveConfig() returned nil error for invalid config")
 	}
-	if !strings.Contains(err.Error(), "vm_profile must not be empty") {
+	if !strings.Contains(err.Error(), "`vm_profile` must not be empty") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestParseRepoHosts(t *testing.T) {
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-	workspaceRoot := filepath.Join(t.TempDir(), "workspace")
+func TestEnsureSubdirectoryAcceptsChildDirectory(t *testing.T) {
+	workspacePath := t.TempDir()
+	harnessPath := filepath.Join(workspacePath, ".harbour-harness")
 
-	reposFile := writeReposFile(t, `
-- host_path: /srv/absolute-repo
-- host_path: relative/repo
-- host_path: ~/home-repo # keep this comment ignored
-`)
-
-	hosts, err := parseRepoHosts(reposFile, workspaceRoot)
-	if err != nil {
-		t.Fatalf("parseRepoHosts() returned error: %v", err)
-	}
-
-	want := []string{
-		"/srv/absolute-repo",
-		filepath.Join(workspaceRoot, "relative/repo"),
-		filepath.Join(homeDir, "home-repo"),
-	}
-	if !reflect.DeepEqual(hosts, want) {
-		t.Fatalf("parseRepoHosts() = %#v, want %#v", hosts, want)
-	}
-}
-
-func TestParseRepoHostsRequiresWorkspaceRootForRelativePaths(t *testing.T) {
-	reposFile := writeReposFile(t, `
-- host_path: relative/repo
-`)
-
-	_, err := parseRepoHosts(reposFile, "")
-	if err == nil {
-		t.Fatal("parseRepoHosts() returned nil error")
-	}
-	if !strings.Contains(err.Error(), "workspace_root is not set") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestExistingRepoHostsSkipsMissingPathsWithWarning(t *testing.T) {
-	workspaceRoot := t.TempDir()
-	existingHost := filepath.Join(workspaceRoot, "existing")
-	if err := os.MkdirAll(existingHost, 0o755); err != nil {
+	if err := os.MkdirAll(harnessPath, 0o755); err != nil {
 		t.Fatalf("MkdirAll() returned error: %v", err)
 	}
 
-	reposFile := writeReposFile(t, `
-- host_path: existing
-- host_path: missing
-`)
-
-	var hosts []string
-	_, stderr := captureOutput(t, func() {
-		var err error
-		hosts, err = existingRepoHosts(reposFile, workspaceRoot, true)
-		if err != nil {
-			t.Fatalf("existingRepoHosts() returned error: %v", err)
-		}
-	})
-
-	wantHosts := []string{existingHost}
-	if !reflect.DeepEqual(hosts, wantHosts) {
-		t.Fatalf("existingRepoHosts() = %#v, want %#v", hosts, wantHosts)
+	if err := ensureSubdirectory(harnessPath, workspacePath, "harness_path", "workspace_path"); err != nil {
+		t.Fatalf("ensureSubdirectory() returned error: %v", err)
 	}
-	if !strings.Contains(stderr, "Warning: skipping missing repo mount") {
-		t.Fatalf("stderr did not contain missing-path warning:\n%s", stderr)
+}
+
+func TestEnsureSubdirectoryRejectsWorkspacePath(t *testing.T) {
+	workspacePath := t.TempDir()
+
+	err := ensureSubdirectory(workspacePath, workspacePath, "harness_path", "workspace_path")
+	if err == nil {
+		t.Fatal("ensureSubdirectory() returned nil error")
+	}
+	if !strings.Contains(err.Error(), "must be inside workspace_path, not equal to it") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestEnsureSubdirectoryRejectsPathOutsideWorkspacePath(t *testing.T) {
+	workspacePath := t.TempDir()
+	harnessPath := t.TempDir()
+
+	err := ensureSubdirectory(harnessPath, workspacePath, "harness_path", "workspace_path")
+	if err == nil {
+		t.Fatal("ensureSubdirectory() returned nil error")
+	}
+	if !strings.Contains(err.Error(), "must be inside workspace_path") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -352,16 +415,6 @@ func stubRunAgent(fn func(bool) error) func() {
 	return func() {
 		runAgentCommand = previous
 	}
-}
-
-func writeReposFile(t *testing.T, contents string) string {
-	t.Helper()
-
-	path := filepath.Join(t.TempDir(), "repos.yaml")
-	if err := os.WriteFile(path, []byte(strings.TrimSpace(contents)+"\n"), 0o644); err != nil {
-		t.Fatalf("os.WriteFile() returned error: %v", err)
-	}
-	return path
 }
 
 func captureOutput(t *testing.T, fn func()) (string, string) {
