@@ -42,6 +42,7 @@ Harbour keeps the VM setup model intentionally simple:
 - The harness must live inside that work directory
 - The selected root instruction file is linked into the VM user's home directory
 - The harness `skills/` directory is linked into the selected agent's skills directory in the VM user's home
+- Docker registries listed in the harness `docker-insecure-registries.txt` are merged into the VM Docker daemon's `insecure-registries` (additive and idempotent), so pushes/pulls to a plain-HTTP registry work
 - The active agent runs directly inside the VM shell
 
 The host-side CLI is Go. The in-VM provision step is still an embedded Bash

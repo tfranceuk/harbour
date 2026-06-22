@@ -77,6 +77,64 @@ if (( ${#missing_packages[@]} > 0 )); then
   sudo apt-get install -y "${missing_packages[@]}"
 fi
 
+# Apply any Docker insecure registries declared by the harness. Mirrors
+# apt-packages.txt: one registry host[:port] per line, '#' comments and blank
+# lines ignored. A registry served over plain HTTP (e.g. a private dev image
+# registry) must be listed here or `docker push` fails with "server gave HTTP
+# response to HTTPS client". The merge is additive — it adds the declared
+# registries to /etc/docker/daemon.json without removing entries it did not add
+# — and idempotent: the daemon is only reloaded when the file actually changes.
+# SIGHUP reload (not restart) applies insecure-registries without dropping
+# running containers, so concurrent sessions on the shared VM are undisturbed.
+harness_insecure_registries_file="${harness_dir}/docker-insecure-registries.txt"
+insecure_registries=()
+if [[ -f "${harness_insecure_registries_file}" ]]; then
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    if [[ -n "${line}" ]]; then
+      insecure_registries+=("${line}")
+    fi
+  done < "${harness_insecure_registries_file}"
+fi
+
+if (( ${#insecure_registries[@]} > 0 )); then
+  echo "Configuring Docker insecure registries: ${insecure_registries[*]}"
+  daemon_changed=$(sudo python3 - "${insecure_registries[@]}" <<'PY'
+import json, os, sys
+
+path = "/etc/docker/daemon.json"
+desired = sys.argv[1:]
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except (FileNotFoundError, ValueError, OSError):
+    cfg = {}
+existing = cfg.get("insecure-registries", [])
+merged = sorted(set(existing) | set(desired))
+if merged != sorted(set(existing)):
+    cfg["insecure-registries"] = merged
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    os.chmod(path, 0o644)
+    print("CHANGED")
+PY
+)
+  if [[ "${daemon_changed}" == "CHANGED" ]]; then
+    if systemctl is-active --quiet docker; then
+      echo "Reloading Docker daemon to apply insecure registries"
+      sudo systemctl reload docker || sudo systemctl restart docker
+    fi
+  else
+    echo "Docker insecure registries already configured"
+  fi
+fi
+
 harness_provision_hook="${harness_dir}/provision.sh"
 if [[ -f "${harness_provision_hook}" ]]; then
   echo "Running harness provision hook: ${harness_provision_hook}"
