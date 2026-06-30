@@ -149,6 +149,20 @@ func (c Colima) RunRemoteScript(script string, args []string) error {
 	return runCommandInput(env, script, "colima", sshArgs...)
 }
 
+// RunColima runs the host `colima` CLI with COLIMA_HOME set (see colimaEnv), so
+// it targets Harbour's isolated home. This is the blessed way to drive Harbour's
+// Colima profile by hand (e.g. `harbour colima list`, `harbour colima restart -p
+// harbour`) without a bare `colima` command accidentally hitting the default
+// ~/.colima home — where, with no override, a new instance would forward host
+// ports again.
+func (c Colima) RunColima(args []string) error {
+	env, err := c.colimaEnv()
+	if err != nil {
+		return err
+	}
+	return runCommand(env, "colima", args...)
+}
+
 // colimaHome is the COLIMA_HOME for this VM. Harbour runs its Colima/lima
 // instance in a home of its own — separate from the engineer's default
 // ~/.colima — so the lima override from writeLimaOverride disables host port

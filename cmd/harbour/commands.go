@@ -15,6 +15,31 @@ import _ "embed"
 //go:embed assets/provision_vm.sh
 var provisionVMScript string
 
+// runColimaCommand passes its args straight to the host `colima` CLI with
+// COLIMA_HOME set to Harbour's isolated home, so manual Colima management always
+// targets the right instance. A leading `--` is accepted but not required:
+// Harbour doesn't flag-parse the passthrough, so `harbour colima list -p
+// harbour` works as-is; `--` is only there for muscle memory.
+func runColimaCommand(args []string) error {
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+
+	cfg, err := loadConfig(false)
+	if err != nil {
+		return err
+	}
+	backend, err := vm.Resolve(cfg.vmConfig())
+	if err != nil {
+		return err
+	}
+	colima, ok := backend.(vm.Colima)
+	if !ok {
+		return fmt.Errorf("`harbour colima` requires the colima backend")
+	}
+	return colima.RunColima(args)
+}
+
 func runProvision() error {
 	cfgPath, err := configPath()
 	if err != nil {

@@ -94,7 +94,10 @@ harbour provision
 harbour shell
 harbour agent
 harbour yolo
+harbour colima <args>   # run colima against Harbour's isolated COLIMA_HOME
 ```
+
+`harbour colima ...` passes straight through to the host `colima` CLI with `COLIMA_HOME` set to Harbour's home, so you can manage Harbour's VM by hand (`harbour colima list`, `harbour colima restart -p harbour`) without a bare `colima` command hitting the wrong home. A leading `--` is accepted but not needed (`harbour colima -- list` == `harbour colima list`).
 
 ## Config
 
@@ -132,7 +135,7 @@ Running in its own home lets Harbour write a lima override (`$COLIMA_HOME/_lima/
 Two things to be aware of:
 
 - **One-time migration.** A `harbour` instance created under the default `~/.colima` before this change is orphaned, and keeps claiming host ports until removed. Run once, with no `COLIMA_HOME` set so it targets the default home: `colima stop -p harbour && colima delete -p harbour`. Harbour then creates a fresh instance in the isolated home.
-- **Visibility.** The isolated instance won't appear in a plain `colima list` / `docker context ls`. Manage it with `COLIMA_HOME=~/.harbour/colima` set, or via Harbour. (Harbour applies `COLIMA_HOME` to every colima call it makes, so its own commands always target the right home.)
+- **Visibility.** The isolated instance won't appear in a plain `colima list` / `docker context ls`. Manage it with `harbour colima ...` (which sets `COLIMA_HOME` for you), or set `COLIMA_HOME=~/.harbour/colima` yourself. To list instances across *all* homes there's no single Colima command — enumerate the homes, e.g. `for h in ~/.colima ~/.harbour/colima; do echo "== $h =="; COLIMA_HOME=$h colima list; done`.
 
 ## Development
 

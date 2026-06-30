@@ -72,6 +72,8 @@ func run(args []string) error {
 			return err
 		}
 		return runAgentCommand(true)
+	case "colima":
+		return runColimaCommand(args)
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
@@ -88,6 +90,7 @@ func printUsage() {
 	fmt.Println("  shell       Open a shell in the Harbour VM")
 	fmt.Println("  agent       Launch the provisioned agent")
 	fmt.Println("  yolo        Launch the provisioned agent with relaxed permissions")
+	fmt.Println("  colima      Run colima against Harbour's isolated COLIMA_HOME")
 	fmt.Println("  help        Show this help")
 	fmt.Println("  version     Show the Harbour version")
 }
