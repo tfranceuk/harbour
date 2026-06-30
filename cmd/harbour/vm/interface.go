@@ -14,6 +14,11 @@ type Config struct {
 	MountType       string
 	ForwardSSHAgent bool
 	NetworkAddress  bool
+	// ColimaHome is the COLIMA_HOME for this VM's Colima/lima instance. Empty
+	// means the harness default (an isolated dir, not the user's ~/.colima) — see
+	// Colima.colimaHome. Isolating the home is what lets Harbour disable host port
+	// forwarding for its own VM without touching the engineer's default VM.
+	ColimaHome string
 }
 
 type Backend interface {

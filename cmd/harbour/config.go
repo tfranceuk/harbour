@@ -25,6 +25,7 @@ type Config struct {
 	VMMountType       string `json:"vm_mount_type"`
 	VMForwardSSHAgent bool   `json:"vm_forward_ssh_agent"`
 	VMNetworkAddress  bool   `json:"vm_network_address"`
+	VMColimaHome      string `json:"vm_colima_home"`
 	CodexVersion      string `json:"codex_version"`
 	ClaudeCodeVersion string `json:"claude_code_version"`
 	HarnessPath       string `json:"harness_path"`
@@ -46,6 +47,8 @@ func defaultConfig() Config {
 		VMMountType:       "virtiofs",
 		VMForwardSSHAgent: true,
 		VMNetworkAddress:  false,
+		// Empty -> Colima.colimaHome computes the isolated default (~/.harbour/colima).
+		VMColimaHome:      "",
 		CodexVersion:      "latest",
 		ClaudeCodeVersion: "latest",
 		HarnessPath:       "",
@@ -226,5 +229,6 @@ func (cfg Config) vmConfig() vm.Config {
 		MountType:       cfg.VMMountType,
 		ForwardSSHAgent: cfg.VMForwardSSHAgent,
 		NetworkAddress:  cfg.VMNetworkAddress,
+		ColimaHome:      cfg.VMColimaHome,
 	}
 }

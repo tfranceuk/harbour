@@ -27,15 +27,19 @@ func (Colima) EnsureInstalled() error {
 }
 
 func (c Colima) Status() (bool, error) {
-	return commandSucceeded("colima", "status", "-p", c.cfg.Profile)
-}
-
-func (c Colima) HasExactMount(expectedMount string) (bool, error) {
-	home, err := os.UserHomeDir()
+	env, err := c.colimaEnv()
 	if err != nil {
 		return false, err
 	}
-	profileConfig := filepath.Join(home, ".colima", c.cfg.Profile, "colima.yaml")
+	return commandSucceeded(env, "colima", "status", "-p", c.cfg.Profile)
+}
+
+func (c Colima) HasExactMount(expectedMount string) (bool, error) {
+	colimaHome, err := c.colimaHome()
+	if err != nil {
+		return false, err
+	}
+	profileConfig := filepath.Join(colimaHome, c.cfg.Profile, "colima.yaml")
 	file, err := os.Open(profileConfig)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -85,6 +89,16 @@ func (c Colima) HasExactMount(expectedMount string) (bool, error) {
 }
 
 func (c Colima) Start(mounts []string) error {
+	env, err := c.colimaEnv()
+	if err != nil {
+		return err
+	}
+	// Write the host-port-forwarding override before `colima start`, so lima
+	// reads it when the instance boots (see writeLimaOverride).
+	if err := c.writeLimaOverride(); err != nil {
+		return err
+	}
+
 	args := []string{
 		"start", c.cfg.Profile,
 		"--runtime", c.cfg.Runtime,
@@ -105,22 +119,104 @@ func (c Colima) Start(mounts []string) error {
 		args = append(args, "--mount", fmt.Sprintf("%s:w", mount))
 	}
 	fmt.Printf("Executing:\n  colima %s\n", shellQuoteArgs(args))
-	return runCommand("colima", args...)
+	return runCommand(env, "colima", args...)
 }
 
 func (c Colima) Stop() error {
-	return runCommand("colima", "stop", "-p", c.cfg.Profile)
+	env, err := c.colimaEnv()
+	if err != nil {
+		return err
+	}
+	return runCommand(env, "colima", "stop", "-p", c.cfg.Profile)
 }
 
 func (c Colima) RunRemoteCommand(command string) error {
-	return runCommand("colima", "ssh", "-p", c.cfg.Profile, "--", "/usr/bin/bash", "-lc", command)
+	env, err := c.colimaEnv()
+	if err != nil {
+		return err
+	}
+	return runCommand(env, "colima", "ssh", "-p", c.cfg.Profile, "--", "/usr/bin/bash", "-lc", command)
 }
 
 func (c Colima) RunRemoteScript(script string, args []string) error {
+	env, err := c.colimaEnv()
+	if err != nil {
+		return err
+	}
 	sshArgs := append([]string{
 		"ssh", "-p", c.cfg.Profile, "--", "/usr/bin/bash", "-s", "--",
 	}, args...)
-	return runCommandInput(script, "colima", sshArgs...)
+	return runCommandInput(env, script, "colima", sshArgs...)
+}
+
+// colimaHome is the COLIMA_HOME for this VM. Harbour runs its Colima/lima
+// instance in a home of its own — separate from the engineer's default
+// ~/.colima — so the lima override from writeLimaOverride disables host port
+// forwarding for THIS VM only. The engineer's default VM keeps forwarding its
+// ports (e.g. the dev DB on 127.0.0.1:1119) untouched.
+//
+// NOTE — one-time migration: a `harbour` instance created under the default
+// ~/.colima before this change is orphaned by it and will keep claiming host
+// ports until removed. Once the harness points here instead, run once, with no
+// COLIMA_HOME set, so it targets the default home:
+//
+//	colima stop -p harbour && colima delete -p harbour
+//
+// The harness then creates a fresh instance in the isolated home. That instance
+// won't appear in a plain `colima list` — manage it with COLIMA_HOME set (or via
+// Harbour).
+func (c Colima) colimaHome() (string, error) {
+	if c.cfg.ColimaHome != "" {
+		return c.cfg.ColimaHome, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".harbour", "colima"), nil
+}
+
+// colimaEnv returns the environment for a `colima` invocation, carrying
+// COLIMA_HOME so the command targets Harbour's isolated home.
+//
+// NOTE — apply to EVERY colima call: this must be set on all of them
+// (Start/Stop/Status/ssh/RunRemote*), not just Start. If some calls set
+// COLIMA_HOME and others don't, they split between the isolated home and the
+// default ~/.colima and operate on different instances. That is why it is
+// threaded through the shared run helpers rather than set once at Start.
+func (c Colima) colimaEnv() ([]string, error) {
+	home, err := c.colimaHome()
+	if err != nil {
+		return nil, err
+	}
+	return append(os.Environ(), "COLIMA_HOME="+home), nil
+}
+
+// limaOverride stops this VM forwarding any guest port to the host. lima reads
+// it from $COLIMA_HOME/_lima/_config/override.yaml and applies it to every
+// instance under that home; because the home is Harbour's own (see colimaHome),
+// only this VM is affected. The agent can't use the dev DB anyway (the bcrypt in
+// the mounted node_modules is the host's macOS build and won't load on Linux),
+// so not exposing ports loses nothing and stops this VM claiming host ports the
+// engineer's default VM also publishes.
+const limaOverride = `# Managed by Harbour — do not edit.
+# Do not forward any guest port to the host: keeps this (harbour) VM from
+# claiming host ports the engineer's default Colima VM also publishes.
+portForwards:
+  - guestPortRange: [1, 65535]
+    ignore: true
+`
+
+func (c Colima) writeLimaOverride() error {
+	home, err := c.colimaHome()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(home, "_lima", "_config")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "override.yaml"), []byte(limaOverride), 0o644)
 }
 
 func ensureCommand(name string) error {
@@ -130,33 +226,44 @@ func ensureCommand(name string) error {
 	return nil
 }
 
-func runCommand(name string, args ...string) error {
+// The run helpers take env so colima invocations carry COLIMA_HOME (see
+// Colima.colimaEnv). A nil env means inherit the process environment unchanged.
+func runCommand(env []string, name string, args ...string) error {
 	if err := ensureCommand(name); err != nil {
 		return err
 	}
 	cmd := exec.Command(name, args...)
+	if env != nil {
+		cmd.Env = env
+	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func runCommandInput(input string, name string, args ...string) error {
+func runCommandInput(env []string, input string, name string, args ...string) error {
 	if err := ensureCommand(name); err != nil {
 		return err
 	}
 	cmd := exec.Command(name, args...)
+	if env != nil {
+		cmd.Env = env
+	}
 	cmd.Stdin = strings.NewReader(input)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func commandSucceeded(name string, args ...string) (bool, error) {
+func commandSucceeded(env []string, name string, args ...string) (bool, error) {
 	if err := ensureCommand(name); err != nil {
 		return false, err
 	}
 	cmd := exec.Command(name, args...)
+	if env != nil {
+		cmd.Env = env
+	}
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	err := cmd.Run()

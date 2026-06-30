@@ -113,6 +113,7 @@ Harbour stores its config as a single JSON file.
   "vm_mount_type": "virtiofs",
   "vm_forward_ssh_agent": true,
   "vm_network_address": false,
+  "vm_colima_home": "",
   "codex_version": "latest",
   "claude_code_version": "latest",
   "harness_path": "",
@@ -121,6 +122,17 @@ Harbour stores its config as a single JSON file.
   "default_command": "agent"
 }
 ```
+
+### Isolated Colima home and host ports
+
+`vm_colima_home` is the `COLIMA_HOME` for Harbour's VM. Empty (the default) means `~/.harbour/colima` — a home of its own, deliberately **not** the engineer's `~/.colima`.
+
+Running in its own home lets Harbour write a lima override (`$COLIMA_HOME/_lima/_config/override.yaml`) that disables host port forwarding for **its** VM only, so the agent VM never claims host ports the engineer's default Colima VM also publishes (e.g. a dev DB on `127.0.0.1:1119`). The default VM is untouched.
+
+Two things to be aware of:
+
+- **One-time migration.** A `harbour` instance created under the default `~/.colima` before this change is orphaned, and keeps claiming host ports until removed. Run once, with no `COLIMA_HOME` set so it targets the default home: `colima stop -p harbour && colima delete -p harbour`. Harbour then creates a fresh instance in the isolated home.
+- **Visibility.** The isolated instance won't appear in a plain `colima list` / `docker context ls`. Manage it with `COLIMA_HOME=~/.harbour/colima` set, or via Harbour. (Harbour applies `COLIMA_HOME` to every colima call it makes, so its own commands always target the right home.)
 
 ## Development
 

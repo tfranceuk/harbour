@@ -10,7 +10,7 @@ func TestColimaHasExactMountMatchesSingleWritableMount(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	profileDir := filepath.Join(homeDir, ".colima", "harbour")
+	profileDir := filepath.Join(homeDir, ".harbour", "colima", "harbour")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() returned error: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestColimaHasExactMountRejectsWrongModeOrExtraMounts(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	profileDir := filepath.Join(homeDir, ".colima", "harbour")
+	profileDir := filepath.Join(homeDir, ".harbour", "colima", "harbour")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll() returned error: %v", err)
 	}
