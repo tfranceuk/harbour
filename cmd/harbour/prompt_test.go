@@ -34,6 +34,11 @@ func TestPromptLineReadsSequentialLinesFromSharedInput(t *testing.T) {
 }
 
 func TestPromptPathWithDefaultReturnsDefaultOnEmptyInput(t *testing.T) {
+	// Force the non-terminal path so promptPath reads the injected promptInput.
+	// liner.TerminalSupported() keys off TERM; without pinning it the test
+	// depends on the ambient TERM and otherwise reads the real stdin (EOF).
+	t.Setenv("TERM", "dumb")
+
 	previousInput := promptInput
 	promptInput = bufio.NewReader(strings.NewReader("\n"))
 	t.Cleanup(func() {
@@ -50,6 +55,9 @@ func TestPromptPathWithDefaultReturnsDefaultOnEmptyInput(t *testing.T) {
 }
 
 func TestPromptPathWithDefaultUsesEnteredValue(t *testing.T) {
+	// Pin TERM so promptPath uses the injected promptInput, not the real stdin.
+	t.Setenv("TERM", "dumb")
+
 	previousInput := promptInput
 	promptInput = bufio.NewReader(strings.NewReader("/tmp/override\n"))
 	t.Cleanup(func() {
