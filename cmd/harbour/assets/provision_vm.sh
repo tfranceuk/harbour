@@ -8,6 +8,36 @@ harbour_harness_agents_b64=$5
 host_uid=$6
 host_gid=$7
 workspace_path=$8
+# Newline-separated absolute paths of harness-declared read-only extra mounts.
+extra_mounts=${9:-}
+
+# Link each extra mount into the VM user's home by basename. Colima mounts a
+# host dir at its host absolute path in the guest (ADR-001), and the guest home
+# differs from the host's, so e.g. host ~/dotscripts lands at
+# /Users/<you>/dotscripts here. Linking by basename makes it reachable as
+# ~/dotscripts regardless of the guest home path — and keeps the mount portable
+# across users (no username baked into the harness or agent config).
+if [[ -n "${extra_mounts}" ]]; then
+  while IFS= read -r mount_path; do
+    [[ -z "${mount_path}" ]] && continue
+    if [[ ! -d "${mount_path}" ]]; then
+      echo "WARNING: extra mount not visible in VM, skipping link: ${mount_path}" >&2
+      continue
+    fi
+    link="${HOME}/$(basename "${mount_path}")"
+    # Never clobber a real file/dir already at the link path, and never
+    # self-link when the mount already lives at the home location.
+    if [[ "${mount_path}" == "${link}" ]]; then
+      continue
+    fi
+    if [[ -e "${link}" && ! -L "${link}" ]]; then
+      echo "WARNING: ${link} exists and is not a symlink, skipping extra-mount link" >&2
+      continue
+    fi
+    ln -sfn "${mount_path}" "${link}"
+    echo "Linked extra mount ${mount_path} -> ${link}"
+  done <<< "${extra_mounts}"
+fi
 
 agent_bin_dir="${HOME}/.local/bin"
 codex_path="${agent_bin_dir}/codex"

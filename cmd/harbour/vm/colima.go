@@ -34,7 +34,12 @@ func (c Colima) Status() (bool, error) {
 	return commandSucceeded(env, "colima", "status", "-p", c.cfg.Profile)
 }
 
-func (c Colima) HasExactMount(expectedMount string) (bool, error) {
+// HasExactMounts reports whether the running profile's mounts are exactly the
+// expected set — same count, and every expected (location, mode) present. The
+// comparison is order-independent: Colima may list mounts in a different order
+// than Harbour passes them. This must match the full set, not just contain it,
+// so a removed or added mount forces a restart to reconcile.
+func (c Colima) HasExactMounts(expected []Mount) (bool, error) {
 	colimaHome, err := c.colimaHome()
 	if err != nil {
 		return false, err
@@ -49,8 +54,8 @@ func (c Colima) HasExactMount(expectedMount string) (bool, error) {
 	}
 	defer file.Close()
 
+	found := map[string]bool{}
 	var mountsFound int
-	var matched bool
 	scanner := bufio.NewScanner(file)
 	inMounts := false
 	location := ""
@@ -72,23 +77,35 @@ func (c Colima) HasExactMount(expectedMount string) (bool, error) {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "writable:") && location != "" {
-			mode := "ro"
-			if strings.TrimSpace(strings.TrimPrefix(trimmed, "writable:")) == "true" {
-				mode = "rw"
-			}
+			writable := strings.TrimSpace(strings.TrimPrefix(trimmed, "writable:")) == "true"
+			found[mountKey(Mount{Location: location, Writable: writable})] = true
 			mountsFound++
-			if fmt.Sprintf("%s|%s", location, mode) == expectedMount {
-				matched = true
-			}
+			location = ""
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return false, err
 	}
-	return mountsFound == 1 && matched, nil
+	if mountsFound != len(expected) {
+		return false, nil
+	}
+	for _, m := range expected {
+		if !found[mountKey(m)] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
-func (c Colima) Start(mounts []string) error {
+func mountKey(m Mount) string {
+	mode := "ro"
+	if m.Writable {
+		mode = "rw"
+	}
+	return fmt.Sprintf("%s|%s", m.Location, mode)
+}
+
+func (c Colima) Start(mounts []Mount) error {
 	env, err := c.colimaEnv()
 	if err != nil {
 		return err
@@ -116,7 +133,12 @@ func (c Colima) Start(mounts []string) error {
 		args = append(args, "--network-address")
 	}
 	for _, mount := range mounts {
-		args = append(args, "--mount", fmt.Sprintf("%s:w", mount))
+		// Colima mounts read-only unless the spec ends in ":w".
+		spec := mount.Location
+		if mount.Writable {
+			spec += ":w"
+		}
+		args = append(args, "--mount", spec)
 	}
 	fmt.Printf("Executing:\n  colima %s\n", shellQuoteArgs(args))
 	return runCommand(env, "colima", args...)

@@ -30,6 +30,7 @@ Homebrew installs Colima automatically for the formula.
    - `AGENTS.md` contains shared instructions
    - `skills/` contains optional custom skills that Harbour links into the selected agent's skills directory in the VM user's home
    - `apt-packages.txt` (optional) lists extra apt packages to install in the VM during `harbour provision`. One package per line; `#` starts a comment; blank lines are ignored.
+   - `extra-mounts.txt` (optional) lists extra host directories to mount into the VM **read-only**, one per line (`#` comments and blank lines ignored). Paths may be `~`-relative, so they stay portable across users (e.g. `~/dotscripts`). Each is mounted at its host absolute path (see the path model below) and also linked into the VM user's home by basename, so a host `~/dotscripts` is reachable as `~/dotscripts` in the VM. The workspace mount stays read-write; extra mounts are read-only.
    - `provision.sh` (optional) runs after apt packages are installed, as the VM user with `HOME` set. Use it for setup that apt cannot do, e.g. installing nvm. Runs on every `harbour provision`, so keep it idempotent.
 
    See https://github.com/agent-harbour/harbour-harness-template for an example.

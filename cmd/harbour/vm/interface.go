@@ -21,12 +21,20 @@ type Config struct {
 	ColimaHome string
 }
 
+// Mount is one host directory exposed inside the VM at the same absolute path
+// (see ADR-001). The workspace mount is writable; harness-declared extra mounts
+// are read-only.
+type Mount struct {
+	Location string
+	Writable bool
+}
+
 type Backend interface {
 	Name() string
 	EnsureInstalled() error
 	Status() (bool, error)
-	HasExactMount(mount string) (bool, error)
-	Start(mounts []string) error
+	HasExactMounts(mounts []Mount) (bool, error)
+	Start(mounts []Mount) error
 	Stop() error
 	RunRemoteCommand(command string) error
 	RunRemoteScript(script string, args []string) error

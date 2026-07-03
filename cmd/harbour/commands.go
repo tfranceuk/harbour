@@ -154,14 +154,23 @@ func runProvision() error {
 		}
 	}
 
-	mounts := []string{cfg.WorkspacePath}
+	// The workspace is mounted read-write; harness-declared extra mounts are
+	// read-only. Extra mounts live in the harness (see readHarnessExtraMounts)
+	// rather than host config, so the mount set travels with the shared harness.
+	extraMountPaths, err := readHarnessExtraMounts(cfg.HarnessPath)
+	if err != nil {
+		return err
+	}
+	mounts := []vm.Mount{{Location: cfg.WorkspacePath, Writable: true}}
+	for _, path := range extraMountPaths {
+		mounts = append(mounts, vm.Mount{Location: path, Writable: false})
+	}
 
 	if err := os.Chdir(cfg.WorkspacePath); err != nil {
 		return err
 	}
 
-	desiredMount := fmt.Sprintf("%s|rw", cfg.WorkspacePath)
-	hasDesiredMount, err := vmBackend.HasExactMount(desiredMount)
+	hasDesiredMount, err := vmBackend.HasExactMounts(mounts)
 	if err != nil {
 		return err
 	}
@@ -173,7 +182,14 @@ func runProvision() error {
 	if running {
 		if !hasDesiredMount {
 			fmt.Printf("Configured mounts differ from the running Harbour profile %s.\n", cfg.VMProfile)
-			fmt.Printf("\nDesired mount:\n  %s\n", strings.Replace(desiredMount, "|", " (", 1)+")")
+			fmt.Printf("\nDesired mounts:\n")
+			for _, m := range mounts {
+				mode := "ro"
+				if m.Writable {
+					mode = "rw"
+				}
+				fmt.Printf("  %s (%s)\n", m.Location, mode)
+			}
 			ok, err := promptYesNo(fmt.Sprintf("\nRestart %s now to apply mount changes? [y/N] ", vmBackend.Name()))
 			if err != nil {
 				return err
@@ -218,6 +234,11 @@ func runProvision() error {
 		hostUID,
 		hostGID,
 		cfg.WorkspacePath,
+		// Newline-separated absolute extra-mount paths. provision_vm.sh links
+		// each into the VM user's home by basename so, e.g., a host ~/dotscripts
+		// (mounted at its host absolute path) is reachable as ~/dotscripts in the
+		// guest regardless of the guest's home path.
+		strings.Join(extraMountPaths, "\n"),
 	}
 
 	if err := vmBackend.RunRemoteScript(provisionVMScript, scriptArgs); err != nil {
