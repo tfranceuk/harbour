@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -217,22 +216,18 @@ func runProvision() error {
 		return fmt.Errorf("%s is missing. Create it in harness_path before provisioning", agentsPath)
 	}
 	skillsPath := filepath.Join(cfg.HarnessPath, "skills")
-	agentsData, err := os.ReadFile(agentsPath)
-	if err != nil {
-		return err
-	}
-	agentsB64 := base64.StdEncoding.EncodeToString(agentsData)
-
-	hostUID := fmt.Sprintf("%d", os.Getuid())
-	hostGID := fmt.Sprintf("%d", os.Getgid())
+	// The harness AGENTS.md is mounted into the VM at this same path (host paths
+	// are mirrored), and the os.Stat above already required it to exist, so the
+	// provision script reads it in place. It is deliberately NOT passed as an
+	// argument: inlining the whole file (base64) onto the `colima ssh` command
+	// line bloats the SSH multiplexing session-request past the control-socket
+	// buffer, after which the stdin fd-pass fails with "sendmsg: Message too
+	// long" and provisioning aborts.
 	scriptArgs := []string{
 		selectedAgent,
 		requestedVersion,
 		agentsPath,
 		skillsPath,
-		agentsB64,
-		hostUID,
-		hostGID,
 		cfg.WorkspacePath,
 		// Newline-separated absolute extra-mount paths. provision_vm.sh links
 		// each into the VM user's home by basename so, e.g., a host ~/dotscripts

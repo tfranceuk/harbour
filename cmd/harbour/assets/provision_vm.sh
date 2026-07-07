@@ -4,12 +4,9 @@ selected_agent=$1
 requested_version=$2
 harbour_harness_agents_path=$3
 harbour_harness_skills_dir=$4
-harbour_harness_agents_b64=$5
-host_uid=$6
-host_gid=$7
-workspace_path=$8
+workspace_path=$5
 # Newline-separated absolute paths of harness-declared read-only extra mounts.
-extra_mounts=${9:-}
+extra_mounts=${6:-}
 
 # Link each extra mount into the VM user's home by basename. Colima mounts a
 # host dir at its host absolute path in the guest (ADR-001), and the guest home
@@ -174,13 +171,6 @@ if [[ -f "${harness_provision_hook}" ]]; then
     echo "WARNING: harness provision hook exited ${hook_status}: ${harness_provision_hook}" >&2
     echo "WARNING: continuing provisioning without it; re-run 'harbour provision' to retry." >&2
   fi
-fi
-
-if [[ ! -f "${harbour_harness_agents_path}" ]]; then
-  tmp_agents=$(mktemp)
-  trap 'rm -rf "${tmpdir}" "${tmp_agents}"' EXIT
-  printf '%s' "${harbour_harness_agents_b64}" | base64 -d > "${tmp_agents}"
-  sudo install -o "${host_uid}" -g "${host_gid}" -m 0644 "${tmp_agents}" "${harbour_harness_agents_path}"
 fi
 
 case "${selected_agent}" in
